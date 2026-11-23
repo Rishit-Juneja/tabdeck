@@ -1,0 +1,10 @@
+[Unit]
+Description=Tab Deck (tablet button page)
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/tabdeck/deck.py
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

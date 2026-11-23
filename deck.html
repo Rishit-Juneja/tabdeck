@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tab Deck</title>
+<style>
+/* Drawn in software on a 2014 tablet: no blur, no big shadows, only short transform transitions. */
+:root{--bg:#09090b;--tile:#151518;--tile-hi:#1f1f24;--line:#26262c;--text:#f4f4f5;--muted:#8b8b95;--red:#e10600;--red-dim:#5c0a0a}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:"Inter","DejaVu Sans",sans-serif;
+  -webkit-user-select:none;user-select:none;overflow:hidden}
+body{background:radial-gradient(120% 70% at 50% -10%,#2a0505 0%,var(--bg) 55%)}
+.top{display:flex;align-items:center;gap:14px;height:78px;padding:10px 16px 6px}
+.clock b{display:block;font-size:34px;font-weight:700;letter-spacing:-1px;line-height:1}
+.clock span{font-size:13px;color:var(--muted)}
+.np{flex:1;min-width:0;display:flex;align-items:center;gap:12px;height:56px;padding:0 14px;border-radius:14px;
+  background:var(--tile);border:1px solid var(--line)}
+.np .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+.np.playing .dot{background:#1db954}
+.np .t{min-width:0}
+.np .t b,.np .t span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np .t b{font-size:15px}.np .t span{font-size:12px;color:var(--muted)}
+.chips{display:flex;gap:8px}
+.chip{height:56px;min-width:74px;padding:7px 10px;border-radius:14px;background:var(--tile);border:1px solid var(--line);
+  display:flex;flex-direction:column;justify-content:center}
+.chip small{font-size:10px;letter-spacing:.12em;color:var(--muted);font-weight:700}
+.chip b{font-size:17px}
+.chip .bar{height:4px;border-radius:2px;background:#2b2b31;margin-top:4px;overflow:hidden}
+.chip .bar i{display:block;height:100%;width:0;background:var(--text);transition:width .25s}
+.chip.alert{background:var(--red-dim);border-color:var(--red)}
+.x{width:40px;height:56px;border:0;border-radius:14px;background:transparent;color:var(--muted);font-size:26px}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(3,1fr);gap:10px;
+  height:calc(100% - 78px);padding:6px 16px 16px}
+.tile{position:relative;border:1px solid var(--line);border-radius:18px;background:var(--tile);color:var(--text);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  font:600 15px/1 inherit;transition:transform .09s,background .09s}
+.tile svg{width:40px;height:40px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tile.press{transform:scale(.94);background:var(--tile-hi)}
+.tile.accent{background:linear-gradient(160deg,#ff2a1a,#b00400);border-color:#ff4433}
+.tile.accent.press{background:linear-gradient(160deg,#ff4433,#c80500)}
+.tile.on{background:var(--red-dim);border-color:var(--red)}
+.tile .sub{position:absolute;top:10px;right:12px;font-size:12px;color:var(--muted);font-weight:700}
+.tile.done::after{content:"";position:absolute;inset:-1px;border-radius:18px;border:2px solid #fff;opacity:0;
+  animation:ok .45s ease-out}
+@keyframes ok{0%{opacity:.9}100%{opacity:0}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="clock"><b id="time">--:--</b><span id="date"></span></div>
+  <div class="np" id="np"><span class="dot"></span><div class="t"><b id="npTitle">Nothing playing</b><span id="npSub">&nbsp;</span></div></div>
+  <div class="chips">
+    <div class="chip" id="cVol"><small>VOLUME</small><b id="vol">–</b><div class="bar"><i id="volBar"></i></div></div>
+    <div class="chip" id="cMic"><small>MIC</small><b id="mic">–</b></div>
+    <div class="chip"><small>CPU</small><b id="cpu">–</b></div>
+    <div class="chip"><small>GPU</small><b id="gpu">–</b></div>
+  </div>
+  <button class="x" id="close" aria-label="Close deck">×</button>
+</div>
+<div class="grid" id="grid"></div>
+
+<script>
+const T = new URLSearchParams(location.search).get('t');
+const I = {   // stroke icons, 24x24
+  prev:'<path d="M19 20 9 12l10-8v16Z"/><path d="M5 19V5"/>',
+  play:'<path d="M6 4l14 8-14 8z"/>',
+  pause:'<path d="M7 4h3v16H7zM14 4h3v16h-3z"/>',
+  next:'<path d="M5 4l10 8-10 8V4Z"/><path d="M19 5v14"/>',
+  voldn:'<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M16 12h6"/>',
+  volup:'<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M19 9v6M16 12h6"/>',
+  mute:'<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="m22 9-6 6M16 9l6 6"/>',
+  mic:'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/>',
+  shot:'<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/>',
+  lock:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  brave:'<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10Z"/>',
+  term:'<path d="m4 17 6-6-6-6M12 19h8"/>',
+  files:'<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  spot:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  disc:'<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  obs:'<path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+};
+// id, label, icon colour (null = white), accent tile
+const TILES = [
+  ['prev','Previous'],['play','Play',null,true],['next','Next'],['voldn','Vol −'],['volup','Vol +'],
+  ['mute','Mute'],['mic','Mic'],['shot','Screenshot'],['lock','Lock PC'],['brave','Browser','#fb542b'],
+  ['term','Terminal'],['files','Files','#f5c542'],['spot','Spotify','#1db954'],['disc','Discord','#5865f2'],['obs','OBS'],
+];
+const svg = (k) => `<svg viewBox="0 0 24 24">${I[k]}</svg>`;
+const grid = document.getElementById('grid');
+for (const [id, label, colour, accent] of TILES) {
+  const b = document.createElement('button');
+  b.className = 'tile' + (accent ? ' accent' : '');
+  b.id = 't-' + id;
+  b.innerHTML = `${svg(id)}<span class="lbl">${label}</span><span class="sub"></span>`;
+  if (colour) b.querySelector('svg').style.color = colour;
+  b.addEventListener('pointerdown', () => b.classList.add('press'));
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => b.classList.remove('press'));
+  b.addEventListener('click', () => tap(id, b));
+  grid.append(b);
+}
+
+async function tap(id, b) {
+  b.classList.remove('done'); void b.offsetWidth; b.classList.add('done');
+  let ok = false;
+  try { ok = (await fetch(`/api/a/${id}?t=${T}`, { method: 'POST' })).ok; } catch (_) {}
+  // actions with no visible result on the tablet say so in the tile's corner for a moment
+  if (id === 'shot' || id === 'lock') {
+    const sub = b.querySelector('.sub');
+    sub.textContent = ok ? (id === 'shot' ? 'Saved ✓' : 'Locked ✓') : 'Failed';
+    setTimeout(() => { sub.textContent = ''; }, 2500);
+  }
+  setTimeout(poll, 350);
+}
+
+const $ = (id) => document.getElementById(id);
+function render(s) {
+  const v = s.volume ?? null;
+  $('vol').textContent = v == null ? '–' : (s.muted ? 'Muted' : v + '%');
+  $('volBar').style.width = (s.muted || v == null ? 0 : Math.min(v, 100)) + '%';
+  $('cVol').classList.toggle('alert', !!s.muted);
+  $('mic').textContent = s.mic_muted ? 'Off' : 'On';
+  $('cMic').classList.toggle('alert', !!s.mic_muted);
+  $('t-mute').classList.toggle('on', !!s.muted);
+  $('t-mic').classList.toggle('on', !!s.mic_muted);
+  $('t-mic').querySelector('.lbl').textContent = s.mic_muted ? 'Mic off' : 'Mic';
+  $('t-volup').querySelector('.sub').textContent = v == null ? '' : v + '%';
+  $('cpu').textContent = s.cpu == null ? '–' : s.cpu + '%';
+  $('gpu').textContent = s.gpu == null ? '–' : `${s.gpu}% · ${s.gpu_temp}°`;
+  const p = s.playing;
+  $('np').classList.toggle('playing', !!p && p.state === 'Playing');
+  $('npTitle').textContent = p && p.title ? p.title : 'Nothing playing';
+  $('npSub').textContent = p ? [p.artist, p.app].filter(Boolean).join(' · ') : ' ';
+  const playing = p && p.state === 'Playing';
+  $('t-play').querySelector('svg').innerHTML = I[playing ? 'pause' : 'play'];
+  $('t-play').querySelector('.lbl').textContent = playing ? 'Pause' : 'Play';
+}
+let busy = false;
+async function poll() {
+  if (busy) return;
+  busy = true;
+  try { render(await (await fetch(`/api/status?t=${T}`)).json()); } catch (_) {}
+  busy = false;
+}
+function tick() {
+  const d = new Date();
+  $('time').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  $('date').textContent = d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+}
+// closes the kiosk through a tiny helper the tablet's launcher runs on 127.0.0.1
+$('close').addEventListener('click', () => fetch('http://127.0.0.1:8781/close', { mode: 'no-cors' }).catch(() => {}));
+tick(); poll();
+setInterval(tick, 10000);
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
